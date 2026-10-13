@@ -1,46 +1,40 @@
 """
-Tree Textual Export (Tree 73)
+Export decision rules for tree index 73 as text.
 
-This script imports the High-Entropy Metal Phosphates (HEMPs) dataset,
-prepares the compositional and entropic features, and trains a
-Random Forest model to predict the transformed conductivity at 80°C.
-It then isolates tree index 73 from the ensemble and exports its 
-internal decision structure using a textual representation, restricted
-to a specified maximal depth.
-
-Author: Tomasz Stawski (tomasz.stawski@bam.de)
+Author: Tomasz M. Stawski (tomasz.stawski@bam.de)
 License: MIT License
 """
 
+import os
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.tree import export_text
 
-# Ingest data using a multi-index configuration
-df_raw = pd.read_csv('HEMPs.csv', header=[0, 1])
+# Load data
+file_path = 'HEMPs.csv'
+if not os.path.exists(file_path):
+    alt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path)
+    if os.path.exists(alt_path):
+        file_path = alt_path
+
+df_raw = pd.read_csv(file_path, header=[0, 1])
 df = pd.DataFrame()
 
-# Specify the target chemical components
 metals = ['Ni', 'Co', 'Fe', 'Mn', 'Cd', 'Cu', 'Mg', 'Zn']
-
-# Iteratively parse and structure the atomic composition percentages
 for metal in metals:
     try:
         col_data = df_raw.loc[:, (slice(None), metal)].iloc[:, 0]
-        # Resolve non-quantitative indicators to zero
         df[metal] = pd.to_numeric(col_data.replace('-', '0'), errors='coerce').fillna(0)
     except KeyError:
         df[metal] = 0
 
-# Parse the configurational entropy feature
 try:
     df['Entropy'] = pd.to_numeric(df_raw.loc[:, (slice(None), 'R')].iloc[:, 0], errors='coerce')
 except Exception:
     df['Entropy'] = 0
 
-# Convert target variables to logarithmic scale for analysis
 for temp_str, col_name in [('25 °C', 'Cond25C'), ('80 °C', 'Cond80C')]:
     try:
         raw_series = df_raw.loc[:, (slice(None), temp_str)].iloc[:, 0]
@@ -49,24 +43,16 @@ for temp_str, col_name in [('25 °C', 'Cond25C'), ('80 °C', 'Cond80C')]:
     except KeyError:
         pass
 
-# Ensure only valid numeric samples at 80°C are retained
-mask = np.isfinite(df['logCond80C'])
-df_80 = df[mask].copy()
-
-# Construct the feature array and target vector
+# 80 °C dataset
+df_80 = df[np.isfinite(df['logCond80C'])].copy()
 X = df_80[metals + ['Entropy']]
 y = df_80['logCond80C']
 
-# Create training and testing subsets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Train the primary predictive model
 rf = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=8)
 rf.fit(X_train, y_train)
 
-# Identify tree 73 from the estimator ensemble
+# Export decision rules for tree index 73 up to depth 4
 tree = rf.estimators_[73]
-
-# Export the decision rules as text limited to depth 4
-r = export_text(tree, feature_names=list(X.columns), max_depth=4)
-print(r)
+rules = export_text(tree, feature_names=list(X.columns), max_depth=4)
+print(rules)

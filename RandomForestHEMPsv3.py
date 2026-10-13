@@ -1,43 +1,15 @@
 """
-RandomForest for HEMPs
+Random Forest and Ridge regression pipeline for HEMPs
 
-This module implements a statistical analysis pipeline for evaluating
-the structure-property relationships in High-Entropy Metal Phosphates (HEMPs).
-
-Scientific Context:
-    The script is designed to identify the primary drivers of proton conductivity
-    in complex, multi-component solid solutions. It decouples the effects of specific
-    chemical identity (e.g., cobalt content) from configurational entropy
-    using non-linear ensemble learning and linear regularisation techniques.
-
-Methodology:
-    1.  **Data Preprocessing**: Handles multi-index CSV data, cleans non-numeric entries,
-        and performs logarithmic transformation of conductivity values 
-        to address the exponential nature of thermally activated transport.
-    2.  **Ensemble Learning (Random Forest)**: Utilises a bootstrapped Random Forest Regressor
-        to determine non-linear Feature Importance. Stability is ensured by aggregating
-        results over 1000 randomized training/testing splits.
-    3.  **Linear Regularisation (Ridge Regression)**: Uses L2-regularised linear regression
-        on standardised features to determine the directional influence (positive/negative)
-        of each descriptor.
-    4.  **Unified Analysis**: restructuring data to treat Temperature as a feature,
-        allowing for the validation of entropy effects across thermal regimes.
-    5.  **Tree Visualisation**: Extracts and plots a single representative decision tree 
-        from the ensemble to illustrate the non-linear feature splitting logic.
-
-Dependencies:
-    - **pandas**: Advanced data manipulation and DataFrame management.
-    - **numpy**: Numerical operations and vectorization.
-    - **scikit-learn**: Machine learning algorithms (RandomForest, Ridge),
-      preprocessing (StandardScaler), model selection tools, and tree visualisation.
-    - **joblib**: Parallel computing to accelerate the iterative bootstrapping process.
-    - **matplotlib / seaborn**: Publication-quality data visualisation.
+Evaluates structure-property relationships in High-Entropy Metal Phosphates (HEMPs),
+decoupling the effects of composition and configurational entropy on proton conductivity
+at 25 °C, 80 °C, and across combined temperatures.
 
 Author: Tomasz M. Stawski (tomasz.stawski@bam.de)
-Date:   February 2026
 License: MIT License
 """
 
+import os
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -112,6 +84,12 @@ def load_and_preprocess_data(file_path):
     FileNotFoundError
         If the specified file_path does not exist.
     """
+    # Fallback to search relative to script directory
+    if not os.path.exists(file_path):
+        alt_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), file_path)
+        if os.path.exists(alt_path):
+            file_path = alt_path
+
     # Load data treating the first two rows as a MultiIndex header
     df_raw = pd.read_csv(file_path, header=[0, 1])
     df = pd.DataFrame()
@@ -235,7 +213,7 @@ def run_stability_analysis(X, y, features, iterations=1000):
     Executes a bootstrapped Random Forest analysis to assess the stability of feature importance.
 
     Standard Feature Importance from a single run can be biased by the specific data split,
-    especially with small datasets (N < 50). This function iterates the modeling process
+    especially with small datasets (N < 50). This function iterates the modelling process
     1000 times with different random seeds to generate a statistical distribution of importance.
 
     Parameters
@@ -257,9 +235,9 @@ def run_stability_analysis(X, y, features, iterations=1000):
     """
     print(f"   ...Running Random Forest Stability Analysis ({iterations} iterations)...")
 
-    # Use Joblib's Parallel to utilise all available CPU cores (n_jobs=-1)
+    # Use Joblib's Parallel to utilise available CPU cores with thread pool
     with tqdm_joblib(tqdm(desc="Bootstrapping", total=iterations)):
-        importances = Parallel(n_jobs=-1, verbose=0)(
+        importances = Parallel(n_jobs=-1, verbose=0, prefer="threads")(
             delayed(_train_single_model)(X, y, i) for i in range(iterations)
         )
 
@@ -279,8 +257,8 @@ def run_ridge_analysis(X, y, features):
     not explicitly provide sign (positive/negative influence). Ridge regression complements
     this by providing signed coefficients.
 
-    Note: Features are standardised (Z-score normalization) prior to regression. This is
-    mandatory for penalised regression to ensuring that coefficient magnitudes are directly
+    Note: Features are standardised (Z-score normalisation) prior to regression. This is
+    mandatory for penalised regression to ensure that coefficient magnitudes are directly
     comparable regardless of feature scale.
 
     Parameters
@@ -311,7 +289,7 @@ def run_ridge_analysis(X, y, features):
 
 # --- Plotting Functions ---
 
-def plot_standard_results(mean_imp, std_imp, ridge_coefs, df_subset, target_col, temp_name):
+def plot_standard_results(mean_imp, std_imp, ridge_coefs, df_subset, target_col, temp_name, output_dir='output'):
     """
     Generates and saves diagnostic plots for a single-temperature analysis.
 
@@ -333,7 +311,10 @@ def plot_standard_results(mean_imp, std_imp, ridge_coefs, df_subset, target_col,
         The name of the target column (e.g., 'logCond80C').
     temp_name : str
         Label for the analysis (e.g., '80C') used in titles and filenames.
+    output_dir : str, optional
+        Target directory to save figure files (default: 'output').
     """
+    os.makedirs(output_dir, exist_ok=True)
     # --- Figure 1: Statistical Model Outputs ---
     fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5), dpi=300)
 
@@ -351,7 +332,7 @@ def plot_standard_results(mean_imp, std_imp, ridge_coefs, df_subset, target_col,
     ax2.grid(True, axis='both', linestyle='--', alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(f'SI_Figure_Regression_{temp_name}.pdf')
+    plt.savefig(os.path.join(output_dir, f'SI_Figure_Regression_{temp_name}.pdf'))
     plt.close()
 
     # --- Figure 2: Physical Hypothesis Visualisation ---
@@ -377,14 +358,15 @@ def plot_standard_results(mean_imp, std_imp, ridge_coefs, df_subset, target_col,
     ax4.grid(True, axis='both', linestyle='--', alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig(f'SI_Figure_Hypothesis_{temp_name}.pdf')
+    plt.savefig(os.path.join(output_dir, f'SI_Figure_Hypothesis_{temp_name}.pdf'))
     plt.close()
 
 
-def plot_combined_results(mean_imp, std_imp, ridge_coefs, df_combined):
+def plot_combined_results(mean_imp, std_imp, ridge_coefs, df_combined, output_dir='output'):
     """
     Generates plots for the combined analysis where Temperature is treated as a feature.
     """
+    os.makedirs(output_dir, exist_ok=True)
     # --- Figure 1: Regression Summary (Combined) ---
     fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 5), dpi=300)
 
@@ -403,7 +385,7 @@ def plot_combined_results(mean_imp, std_imp, ridge_coefs, df_combined):
     ax2.grid(True, axis='both', linestyle='--', alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig('SI_Figure_Regression_Combined.pdf')
+    plt.savefig(os.path.join(output_dir, 'SI_Figure_Regression_Combined.pdf'))
     plt.close()
 
     # --- Figure 2: Hypothesis Visualisation (Split by Temperature) ---
@@ -435,15 +417,16 @@ def plot_combined_results(mean_imp, std_imp, ridge_coefs, df_combined):
     ax4.legend()
 
     plt.tight_layout()
-    plt.savefig('SI_Figure_Hypothesis_Combined.pdf')
+    plt.savefig(os.path.join(output_dir, 'SI_Figure_Hypothesis_Combined.pdf'))
     plt.close()
 
 
-def plot_representative_tree(X, y, features, temp_name):
+def plot_representative_tree(X, y, features, temp_name, output_dir='output'):
     """
     Trains a representative Random Forest model and plots a single decision tree
     from the ensemble to visualise the non-linear splitting rules.
     """
+    os.makedirs(output_dir, exist_ok=True)
     print(f"   ...Generating representative Decision Tree visualisation for {temp_name}...")
     
     # Train a single standard model (no need to iterate 1000 times for this)
@@ -468,7 +451,7 @@ def plot_representative_tree(X, y, features, temp_name):
     import matplotlib.colors as mcolors
     root_x, root_y = annotations[0].get_position()
     
-    # Extract values for colour normalization
+    # Extract values for colour normalisation
     values = []
     for ann in annotations:
         text = ann.get_text()
@@ -496,7 +479,7 @@ def plot_representative_tree(X, y, features, temp_name):
             curr_x, curr_y = ann.get_position()
             # Move towards the root (set fixed high Y)
             new_y = root_y - 0.05
-            # Shift slightly inwards for centering
+            # Shift slightly inwards for centring
             new_x = curr_x + (root_x - curr_x) * 0.15
             ann.set_position((new_x, new_y))
             ann.set_weight('bold')
@@ -522,7 +505,7 @@ def plot_representative_tree(X, y, features, temp_name):
 
     plt.title(f"Representative Decision Tree (Random Forest Ensemble) - {temp_name}", fontsize=18)
     plt.tight_layout()
-    plt.savefig(f'SI_Figure_Single_Tree_Visualization_{temp_name}.pdf', format='pdf')
+    plt.savefig(os.path.join(output_dir, f'SI_Figure_Single_Tree_Visualization_{temp_name}.pdf'), format='pdf')
     plt.close()
 
 
@@ -533,6 +516,10 @@ def run_analysis_pipeline():
     Main controller function that performs the data loading, processing,
     and analysis workflows.
     """
+    base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else '.'
+    output_dir = os.path.join(base_dir, 'output')
+    os.makedirs(output_dir, exist_ok=True)
+
     # Attempt to load the dataset
     try:
         df, metals = load_and_preprocess_data('HEMPs.csv')
@@ -556,7 +543,7 @@ def run_analysis_pipeline():
             coefs = run_ridge_analysis(X, y, metals + ['Entropy'])
             
             # Generate Visualisations
-            plot_standard_results(imp, std, coefs, df_25, 'logCond25C', '25C')
+            plot_standard_results(imp, std, coefs, df_25, 'logCond25C', '25C', output_dir=output_dir)
         else:
             print("Warning: Insufficient data points for 25°C analysis.")
 
@@ -572,10 +559,10 @@ def run_analysis_pipeline():
             
             imp, std = run_stability_analysis(X, y, metals + ['Entropy'])
             coefs = run_ridge_analysis(X, y, metals + ['Entropy'])
-            plot_standard_results(imp, std, coefs, df_80, 'logCond80C', '80C')
+            plot_standard_results(imp, std, coefs, df_80, 'logCond80C', '80C', output_dir=output_dir)
             
             # Generate the single tree visualisation for 80C
-            plot_representative_tree(X, y, metals + ['Entropy'], '80C')
+            plot_representative_tree(X, y, metals + ['Entropy'], '80C', output_dir=output_dir)
         else:
             print("Warning: Insufficient data points for 80°C analysis.")
 
@@ -590,7 +577,7 @@ def run_analysis_pipeline():
         
         imp, std = run_stability_analysis(X, y, features)
         coefs = run_ridge_analysis(X, y, features)
-        plot_combined_results(imp, std, coefs, df_combined)
+        plot_combined_results(imp, std, coefs, df_combined, output_dir=output_dir)
         print("Combined analysis pipeline completed successfully.")
     else:
         print("Warning: Not enough aggregate data for combined analysis.")
